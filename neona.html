@@ -93,6 +93,63 @@
   }
   requestAnimationFrame(draw);
 
+  // ---------- Sprechen (Server holt Stimme, Seite spielt sie ab) ----------
+  var AC = window.AudioContext || window.webkitAudioContext;
+  var actx = null, pending = null, idleTimer = null;
+
+  function unlock() {
+    try {
+      if (!actx && AC) actx = new AC();
+      if (actx && actx.state === 'suspended') actx.resume();
+    } catch (e) {}
+  }
+  function backToIdle(label) {
+    if (mode === 'answering') setMode('idle', label || 'bereit');
+  }
+  function play(buf) {
+    var src = actx.createBufferSource();
+    src.buffer = buf;
+    src.connect(actx.destination);
+    src.onended = function () { pending = null; backToIdle('bereit'); };
+    src.start();
+    stateEl.textContent = 'spricht';
+  }
+  function speak(text) {
+    if (!text) { backToIdle(); return; }
+    unlock();
+    if (!actx) { stateEl.textContent = 'kein Ton moeglich'; return; }
+    fetch(SERVER + '/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Neona-Key': TOKEN },
+      body: JSON.stringify({ text: text })
+    })
+      .then(function (r) {
+        if (!r.ok) return r.text().then(function (t) { throw new Error(r.status + ' ' + t.slice(0, 100)); });
+        return r.arrayBuffer();
+      })
+      .then(function (ab) {
+        return new Promise(function (res, rej) { actx.decodeAudioData(ab, res, rej); });
+      })
+      .then(function (buf) {
+        if (actx.state === 'suspended') {
+          pending = buf;
+          stateEl.textContent = 'Display tippen = abspielen';
+          return;
+        }
+        play(buf);
+      })
+      .catch(function (err) {
+        stateEl.textContent = 'Ton-Fehler';
+        ansEl.textContent += '\n[Ton: ' + (err && err.message ? err.message : err) + ']';
+        backToIdle('Ton-Fehler');
+      });
+  }
+  document.addEventListener('click', function () {
+    unlock();
+    if (pending && actx && actx.state !== 'suspended') { var b = pending; pending = null; play(b); }
+    else if (pending && actx) { actx.resume().then(function () { var b = pending; pending = null; if (b) play(b); }); }
+  });
+
   // ---------- Antwort holen ----------
   function ask(text) {
     if (!SERVER || !TOKEN) {
@@ -113,7 +170,7 @@
       .then(function (j) {
         ansEl.textContent = j.answer || '';
         setMode('answering', 'Antwort');
-        setTimeout(function () { if (mode === 'answering') setMode('idle', 'bereit'); }, 8000);
+        speak(j.answer || '');
       })
       .catch(function (err) {
         ansEl.textContent = 'Fehler: ' + err.message;
@@ -128,6 +185,7 @@
     if (listening || mode === 'thinking') return;
     if (typeof CreationVoiceHandler === 'undefined') { setMode('idle', 'Sprach-Bruecke fehlt'); return; }
     listening = true;
+    unlock();
     youEl.textContent = ''; ansEl.textContent = '';
     setMode('listening', 'hoere zu');
     try { CreationVoiceHandler.postMessage('start'); } catch (e) { listening = false; setMode('idle', 'Fehler start'); }
