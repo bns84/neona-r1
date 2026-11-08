@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=240, initial-scale=1, user-scalable=no">
+<title>Neona Labor 2</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #000; color: #cfd8dc; overflow: hidden; }
+  body { width: 240px; position: relative; font: 10px/12px monospace; }
+  #hd { position: absolute; left: 0; right: 0; top: 0; height: 14px; padding: 1px 4px; background: #102027; color: #80cbc4; white-space: nowrap; overflow: hidden; }
+  #log { position: absolute; left: 0; right: 0; top: 17px; bottom: 0; padding: 2px 4px; white-space: pre-wrap; word-break: break-all; overflow: hidden; }
+</style>
+</head>
+<body>
+<div id="hd"></div>
+<div id="log"></div>
+<script>
+(function () {
+  var hd = document.getElementById('hd');
+  var logEl = document.getElementById('log');
+  var lines = [];
+  var off = 0;            // 0 = ganz unten
+  var VIS = 21;
+  var running = false;
+
+  function render() {
+    hd.textContent = 'LABOR 2  Tippen/Knopf = Test';
+    var end = lines.length - off;
+    var start = Math.max(0, end - VIS);
+    logEl.textContent = lines.slice(start, end).join('\n');
+  }
+  function log(s) { lines.push(String(s)); if (lines.length > 300) lines.shift(); render(); }
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  function stopStream(s) { try { s.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} }
+
+  // getUserMedia mit Zeitgrenze; liefert {ok, stream|err}
+  function gum(constraints, ms) {
+    return new Promise(function (resolve) {
+      var done = false;
+      var t0 = Date.now();
+      var w = setTimeout(function () {
+        if (done) return;
+        done = true;
+        resolve({ ok: false, err: 'keine Antwort nach ' + ms + ' ms' });
+        // spaete Antwort sauber aufraeumen
+      }, ms);
+      var p;
+      try { p = navigator.mediaDevices.getUserMedia(constraints); }
+      catch (e) { clearTimeout(w); done = true; resolve({ ok: false, err: 'Wurf: ' + e.name + ' ' + e.message }); return; }
+      p.then(function (s) {
+        if (done) { stopStream(s); return; }
+        done = true; clearTimeout(w);
+        resolve({ ok: true, stream: s, ms: Date.now() - t0 });
+      }).catch(function (e) {
+        if (done) return;
+        done = true; clearTimeout(w);
+        resolve({ ok: false, err: (e && e.name) + ' ' + ((e && e.message) || '') });
+      });
+    });
+  }
+
+  // 1,5 s lang Pegel messen
+  function measure(stream) {
+    return new Promise(function (resolve) {
+      try {
+        var AC = window.AudioContext || window.webkitAudioContext;
+        var ctx = new AC();
+        if (ctx.resume) ctx.resume();
+        var src = ctx.createMediaStreamSource(stream);
+        var an = ctx.createAnalyser();
+        an.fftSize = 512;
+        src.connect(an);
+        var buf = new Uint8Array(an.fftSize), peak = 0, n = 0;
+        var iv = setInterval(function () {
+          an.getByteTimeDomainData(buf);
+          var sum = 0;
+          for (var i = 0; i < buf.length; i++) { var v = (buf[i] - 128) / 128; sum += v * v; }
+          var rms = Math.sqrt(sum / buf.length);
+          if (rms > peak) peak = rms;
+          n++;
+        }, 50);
+        setTimeout(function () {
+          clearInterval(iv);
+          try { src.disconnect(); } catch (e) {}
+          try { ctx.close(); } catch (e) {}
+          resolve({ peak: peak, n: n });
+        }, 1500);
+      } catch (e) { resolve({ peak: -1, n: 0, err: e.message }); }
+    });
+  }
+
+  async function tryGum(label, constraints) {
+    log('> ' + label);
+    var r = await gum(constraints, 4000);
+    if (!r.ok) { log('  nein: ' + r.err); return false; }
+    var tr = r.stream.getAudioTracks()[0];
+    log('  JA nach ' + r.ms + ' ms ' + (tr ? tr.readyState + ' muted=' + tr.muted : ''));
+    log('  jetzt SPRECHEN (1,5 s)');
+    var m = await measure(r.stream);
+    stopStream(r.stream);
+    log('  Pegel max ' + (m.peak < 0 ? 'Fehler ' + m.err : m.peak.toFixed(3)) + ' (' + m.n + ' Mess.)');
+    return true;
+  }
+
+  async function tryDevices() {
+    log('> Geraete einzeln');
+    var list = [];
+    try { list = await navigator.mediaDevices.enumerateDevices(); } catch (e) { log('  enumerate Fehler'); return; }
+    var ins = list.filter(function (d) { return d.kind === 'audioinput'; });
+    log('  ' + ins.length + ' Eingaenge');
+    for (var i = 0; i < ins.length && i < 4; i++) {
+      var d = ins[i];
+      var id = d.deviceId || '';
+      log('  [' + i + '] ' + (d.label || 'ohne Name') + ' id=' + (id ? id.slice(0, 8) : 'leer'));
+      if (!id) { log('  (keine id, uebersprungen)'); continue; }
+      await tryGum('Geraet ' + i, { audio: { deviceId: { exact: id } } });
+    }
+  }
+
+  async function trySpeech() {
+    log('> SpeechRecognition');
+    var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { log('  fehlt'); return; }
+    await new Promise(function (resolve) {
+      var rec, fin = false;
+      function end(msg) { if (fin) return; fin = true; if (msg) log('  ' + msg); try { rec.abort(); } catch (e) {} resolve(); }
+      try {
+        rec = new SR();
+        rec.lang = 'de-DE';
+        rec.onstart = function () { log('  gestartet, SPRECHEN'); };
+        rec.onaudiostart = function () { log('  audiostart'); };
+        rec.onresult = function (e) { end('Text: ' + e.results[0][0].transcript); };
+        rec.onerror = function (e) { end('Fehler: ' + e.error); };
+        rec.onend = function () { end('beendet'); };
+        rec.start();
+      } catch (e) { end('Wurf: ' + e.name + ' ' + e.message); return; }
+      setTimeout(function () { end('keine Antwort nach 5 s'); }, 5000);
+    });
+  }
+
+  async function runAll(trigger) {
+    if (running) return;
+    running = true;
+    off = 0;
+    log('=== Lauf, Ausloeser: ' + trigger + ' ===');
+    try {
+      if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+        log('getUserMedia fehlt');
+      } else {
+        var ok1 = await tryGum('1 Standard', { audio: true });
+        await tryGum('2 ohne Filter', { audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+        await tryDevices();
+      }
+      await trySpeech();
+    } catch (e) { log('Fehler: ' + (e && e.message)); }
+    log('=== fertig ===');
+    running = false;
+  }
+
+  // Ausloeser: Knopf-Ereignisse und echter Fingertipp
+  window.addEventListener('sideClick', function () { runAll('Knopf kurz'); });
+  window.addEventListener('longPressStart', function () { runAll('Knopf halten'); });
+  document.addEventListener('click', function () { runAll('Fingertipp'); });
+  window.addEventListener('scrollUp', function () { off = Math.min(Math.max(0, lines.length - VIS), off + 3); render(); });
+  window.addEventListener('scrollDown', function () { off = Math.max(0, off - 3); render(); });
+  window.addEventListener('keydown', function (e) { if (e.code === 'Space' && !e.repeat) { e.preventDefault(); runAll('Leertaste'); } });
+  window.addEventListener('error', function (e) { log('JS-Fehler: ' + e.message); });
+  window.addEventListener('unhandledrejection', function (e) { log('Promise-Fehler: ' + (e.reason && e.reason.name ? e.reason.name : e.reason)); });
+
+  var ua = navigator.userAgent, a = ua.match(/Android [\d.]+/), c = ua.match(/Chrome\/[\d.]+/);
+  log('Labor 2 geladen');
+  log('Android ' + (a ? a[0].slice(8) : '?') + ' Chrome ' + (c ? c[0].slice(7) : '?'));
+  log('Sicherer Kontext: ' + (window.isSecureContext ? 'ja' : 'nein'));
+  log('Tippe auf den Bildschirm');
+  log('ODER Knopf kurz/halten.');
+  log('Dabei laut sprechen.');
+  log('Rad = Zeilen scrollen');
+})();
+</script>
+</body>
+</html>
