@@ -28,7 +28,7 @@
   var ansEl = document.getElementById('ans');
 
   var params = new URLSearchParams(location.search);
-  var SERVER = (params.get('server') || '').replace(/\/+$/, '');
+  var SERVER = (params.get('server') || 'https://remindful-playmaker-breeder.ngrok-free.dev').replace(/\/+$/, '');
   var TOKEN = params.get('token') || '';
 
   // ---------- Kugel (Canvas 2D) ----------
@@ -120,7 +120,7 @@
     if (!actx) { stateEl.textContent = 'kein Ton moeglich'; return; }
     fetch(SERVER + '/tts', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Neona-Key': TOKEN },
+      headers: { 'Content-Type': 'application/json', 'X-Neona-Key': TOKEN, 'ngrok-skip-browser-warning': '1' },
       body: JSON.stringify({ text: text })
     })
       .then(function (r) {
@@ -160,7 +160,7 @@
     setMode('thinking', 'denke nach');
     fetch(SERVER + '/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Neona-Key': TOKEN },
+      headers: { 'Content-Type': 'application/json', 'X-Neona-Key': TOKEN, 'ngrok-skip-browser-warning': '1' },
       body: JSON.stringify({ text: text })
     })
       .then(function (r) {
