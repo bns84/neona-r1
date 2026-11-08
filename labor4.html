@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=240, initial-scale=1, user-scalable=no">
+<title>Neona Labor 4</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #000; color: #cfd8dc; overflow: hidden; }
+  body { width: 240px; position: relative; font: 10px/12px monospace; }
+  #hd { position: absolute; left: 0; right: 0; top: 0; height: 14px; padding: 1px 4px; background: #102027; color: #80cbc4; white-space: nowrap; overflow: hidden; }
+  #big { position: absolute; left: 0; right: 0; top: 17px; padding: 4px; font: 14px/17px system-ui, sans-serif; color: #fff; height: 70px; overflow: hidden; }
+  .b { position: absolute; left: 6px; right: 6px; height: 30px; line-height: 30px; text-align: center; font: 13px/30px system-ui, sans-serif; background: #263238; color: #fff; border-radius: 6px; }
+  #b1 { top: 90px; } #b2 { top: 124px; }
+  #log { position: absolute; left: 0; right: 0; top: 160px; bottom: 0; padding: 2px 4px; white-space: pre-wrap; word-break: break-all; overflow: hidden; color: #90a4ae; }
+</style>
+</head>
+<body>
+<div id="hd">LABOR 4  Sprechen</div>
+<div id="big">Tippe Knopf 1 oder 2. Seitenknopf kurz = Knopf 1.</div>
+<div class="b" id="b1">1: Stimme sprechen</div>
+<div class="b" id="b2">2: Piepton</div>
+<div id="log"></div>
+<script>
+(function () {
+  var logEl = document.getElementById('log');
+  var big = document.getElementById('big');
+  var lines = [];
+  function log(s) { lines.push(String(s)); if (lines.length > 100) lines.shift(); logEl.textContent = lines.slice(-8).join('\n'); }
+
+  var hasSS = ('speechSynthesis' in window) && (typeof SpeechSynthesisUtterance !== 'undefined');
+  log('speechSynthesis: ' + (hasSS ? 'ja' : 'NEIN'));
+  log('AudioContext: ' + ((window.AudioContext || window.webkitAudioContext) ? 'ja' : 'NEIN'));
+  if (hasSS) {
+    try {
+      var v = speechSynthesis.getVoices();
+      log('Stimmen: ' + v.length);
+      speechSynthesis.onvoiceschanged = function () { log('Stimmen jetzt: ' + speechSynthesis.getVoices().length); };
+    } catch (e) { log('Stimmen Fehler: ' + e.message); }
+  }
+
+  function sprich() {
+    big.textContent = 'Test 1 ...';
+    if (!hasSS) { log('T1: keine speechSynthesis'); return; }
+    try {
+      var u = new SpeechSynthesisUtterance('Hallo Boris, hier ist Neona. Hörst du mich?');
+      u.lang = 'de-DE';
+      u.onstart = function () { log('T1: start'); };
+      u.onend = function () { log('T1: ende'); big.textContent = 'T1 fertig. Gehört?'; };
+      u.onerror = function (e) { log('T1 Fehler: ' + (e.error || e)); };
+      speechSynthesis.cancel();
+      speechSynthesis.speak(u);
+      log('T1: speak() aufgerufen');
+      setTimeout(function () { log('speaking=' + speechSynthesis.speaking); }, 1500);
+    } catch (e) { log('T1 Ausnahme: ' + e.message); }
+  }
+
+  function piep() {
+    big.textContent = 'Test 2 ...';
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      var ctx = new AC();
+      log('T2: Kontext ' + ctx.state);
+      var o = ctx.createOscillator(), g = ctx.createGain();
+      o.frequency.value = 660; g.gain.value = 0.5;
+      o.connect(g); g.connect(ctx.destination);
+      var go = function () { o.start(); setTimeout(function () { o.stop(); log('T2: ende'); big.textContent = 'T2 fertig. Gehört?'; }, 800); };
+      if (ctx.state === 'suspended') { ctx.resume().then(function () { log('T2: resume ok'); go(); }, function (e) { log('T2 resume Fehler'); }); }
+      else go();
+    } catch (e) { log('T2 Ausnahme: ' + e.message); }
+  }
+
+  document.getElementById('b1').addEventListener('click', sprich);
+  document.getElementById('b2').addEventListener('click', piep);
+  window.addEventListener('sideClick', function () { log('sideClick'); sprich(); });
+  window.addEventListener('error', function (e) { log('JS-Fehler: ' + e.message); });
+})();
+</script>
+</body>
+</html>
