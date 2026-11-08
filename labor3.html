@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=240, initial-scale=1, user-scalable=no">
+<title>Neona Labor 3</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #000; color: #cfd8dc; overflow: hidden; }
+  body { width: 240px; position: relative; font: 10px/12px monospace; }
+  #hd { position: absolute; left: 0; right: 0; top: 0; height: 14px; padding: 1px 4px; background: #102027; color: #80cbc4; white-space: nowrap; overflow: hidden; }
+  #big { position: absolute; left: 0; right: 0; top: 17px; padding: 4px; font: 14px/17px system-ui, sans-serif; color: #fff; height: 100px; overflow: hidden; }
+  #log { position: absolute; left: 0; right: 0; top: 120px; bottom: 0; padding: 2px 4px; white-space: pre-wrap; word-break: break-all; overflow: hidden; color: #90a4ae; }
+</style>
+</head>
+<body>
+<div id="hd">LABOR 3  Sprache ueber R1</div>
+<div id="big">Knopf HALTEN, sprechen, loslassen.</div>
+<div id="log"></div>
+<script>
+(function () {
+  var big = document.getElementById('big');
+  var logEl = document.getElementById('log');
+  var lines = [];
+  var VIS = 14;
+  var listening = false;
+
+  function render() { logEl.textContent = lines.slice(-VIS).join('\n'); }
+  function log(s) { lines.push(String(s)); if (lines.length > 100) lines.shift(); render(); }
+
+  var hasVoice = (typeof CreationVoiceHandler !== 'undefined');
+  var hasPlugin = (typeof PluginMessageHandler !== 'undefined');
+  log('CreationVoiceHandler: ' + (hasVoice ? 'ja' : 'NEIN'));
+  log('PluginMessageHandler: ' + (hasPlugin ? 'ja' : 'nein'));
+  log('getUserMedia: ' + ((navigator.mediaDevices && navigator.mediaDevices.getUserMedia) ? 'ja' : 'nein'));
+
+  function start(src) {
+    if (listening) return;
+    listening = true;
+    big.textContent = 'hoere zu ...';
+    log('start (' + src + ')');
+    if (typeof CreationVoiceHandler === 'undefined') { log('FEHLER: Handler fehlt'); listening = false; return; }
+    try { CreationVoiceHandler.postMessage('start'); } catch (e) { log('start Fehler: ' + e.message); listening = false; }
+  }
+  function stop(src) {
+    if (!listening) return;
+    log('stop (' + src + ')');
+    big.textContent = 'warte auf Text ...';
+    if (typeof CreationVoiceHandler === 'undefined') return;
+    try { CreationVoiceHandler.postMessage('stop'); } catch (e) { log('stop Fehler: ' + e.message); }
+    // Sicherheitsnetz: nach 8 s ohne Antwort melden
+    setTimeout(function () {
+      if (listening) { listening = false; big.textContent = 'keine Antwort nach 8 s'; log('Timeout: kein sttEnded'); }
+    }, 8000);
+  }
+
+  window.onPluginMessage = function (data) {
+    var d = data;
+    if (typeof d === 'string') { try { d = JSON.parse(d); } catch (e) {} }
+    var raw;
+    try { raw = JSON.stringify(d); } catch (e) { raw = String(d); }
+    log('Nachricht: ' + raw.slice(0, 140));
+    if (d && d.type === 'sttEnded') {
+      listening = false;
+      var t = ((d.transcript || '') + '').trim();
+      big.textContent = t ? ('Du: ' + t) : '(leer)';
+    }
+  };
+
+  window.addEventListener('longPressStart', function () { start('Knopf halten'); });
+  window.addEventListener('longPressEnd', function () { stop('Knopf loslassen'); });
+  window.addEventListener('sideClick', function () { log('sideClick'); });
+  window.addEventListener('keydown', function (e) { if (e.code === 'Space' && !e.repeat) { e.preventDefault(); start('Leertaste'); } });
+  window.addEventListener('keyup', function (e) { if (e.code === 'Space') { e.preventDefault(); stop('Leertaste'); } });
+  window.addEventListener('error', function (e) { log('JS-Fehler: ' + e.message); });
+})();
+</script>
+</body>
+</html>
